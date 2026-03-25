@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.static('public'));
 
 // Conexão MongoDB (Substitua pela sua URL do MongoDB Atlas ou Local)
-mongoose.connect('mongodb://127.0.0.1:27017/rede_social_simples')
+mongoose.connect('mongodb+srv://santosborge484_db_user:uNWJuU9Wk7C15r3t@cluster0.yqbcfll.mongodb.net/?appName=Cluster0')
     .then(() => console.log('✅ Conectado ao MongoDB'))
     .catch(err => console.error('❌ Erro ao conectar:', err));
 
