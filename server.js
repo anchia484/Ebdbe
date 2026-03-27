@@ -1,39 +1,46 @@
-// server.js
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
-const path = require('path');
 
 const app = express();
-const PORT = 3000;
-const SECRET_KEY = 'sua_chave_secreta_aqui'; // Em produção, use variáveis de ambiente
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = 'sua_chave_secreta_aqui'; 
 
 // Middlewares
 app.use(express.json());
 app.use(cors());
-app.use(express.static('public'));
 
-// Conexão MongoDB (Substitua pela sua URL do MongoDB Atlas ou Local)
-mongoose.connect('mongodb+srv://santosborge484_db_user:uNWJuU9Wk7C15r3t@cluster0.yqbcfll.mongodb.net/?appName=Cluster0')
-    .then(() => console.log('✅ Conectado ao MongoDB'))
-    .catch(err => console.error('❌ Erro ao conectar:', err));
+// --- CONEXÃO MONGODB ATLAS ---
+// String atualizada com o nome do banco 'minirede_social' e parâmetros de segurança
+const mongoURI = 'mongodb+srv://santosborge484_db_user:uNWJuU9Wk7C15r3t@cluster0.yqbcfll.mongodb.net/minirede_social?retryWrites=true&w=majority&appName=Cluster0';
 
-// --- MODELOS ---
+mongoose.connect(mongoURI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+})
+.then(() => console.log('✅ Conectado ao MongoDB Atlas com sucesso!'))
+.catch(err => {
+    console.error('❌ Erro crítico de conexão:', err.message);
+    console.log('Verifique se o IP 0.0.0.0/0 está ativo no painel Network Access do Atlas.');
+});
+
+// --- MODELS ---
 
 const UserSchema = new mongoose.Schema({
-    name: { type: String, required: true },
-    email: { type: String, unique: true, required: true },
-    password: { type: String, required: true },
-    bio: { type: String, default: "" },
-    avatar: { type: String, default: "" }
+    nome: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    senha: { type: String, required: true },
+    foto: { type: String, default: 'https://cdn-icons-png.flaticon.com/512/149/149071.png' },
+    criadoEm: { type: Date, default: Date.now }
 });
 
 const PostSchema = new mongoose.Schema({
-    content: { type: String, required: true },
-    author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    createdAt: { type: Date, default: Date.now }
+    conteudo: { type: String, required: true },
+    autor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    criadoEm: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', UserSchema);
@@ -41,78 +48,119 @@ const Post = mongoose.model('Post', PostSchema);
 
 // --- MIDDLEWARE DE AUTENTICAÇÃO ---
 
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+const authMiddleware = (req, res, next) => {
+    const token = req.header('Authorization');
+    if (!token) return res.status(401).json({ msg: 'Acesso negado. Faça login primeiro.' });
 
-    if (!token) return res.status(401).json({ error: 'Acesso negado' });
-
-    jwt.verify(token, SECRET_KEY, (err, user) => {
-        if (err) return res.status(403).json({ error: 'Token inválido' });
-        req.user = user;
+    try {
+        const decoded = jwt.verify(token.replace('Bearer ', ''), JWT_SECRET);
+        req.user = decoded;
         next();
-    });
+    } catch (err) {
+        res.status(400).json({ msg: 'Sessão inválida ou expirada.' });
+    }
 };
 
 // --- ROTAS DE AUTENTICAÇÃO ---
 
+// Registro
 app.post('/api/register', async (req, res) => {
     try {
-        const { name, email, password } = req.body;
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const newUser = new User({ name, email, password: hashedPassword });
+        const { nome, email, senha } = req.body;
+        
+        let userExists = await User.findOne({ email });
+        if (userExists) return res.status(400).json({ msg: 'Este e-mail já está em uso.' });
+
+        const salt = await bcrypt.genSalt(10);
+        const senhaCripto = await bcrypt.hash(senha, salt);
+
+        const newUser = new User({ nome, email, senha: senhaCripto });
         await newUser.save();
-        res.status(201).json({ message: 'Usuário criado com sucesso!' });
-    } catch (error) {
-        res.status(400).json({ error: 'Erro ao registrar usuário (Email já existe?)' });
+
+        res.status(201).json({ msg: 'Usuário registrado com sucesso!' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
+// Login
 app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ error: 'Usuário não encontrado' });
+    try {
+        const { email, senha } = req.body;
+        const user = await User.findOne({ email });
+        if (!user) return res.status(400).json({ msg: 'Usuário não encontrado.' });
 
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) return res.status(400).json({ error: 'Senha incorreta' });
+        const isMatch = await bcrypt.compare(senha, user.senha);
+        if (!isMatch) return res.status(400).json({ msg: 'Senha incorreta.' });
 
-    const token = jwt.sign({ id: user._id, name: user.name }, SECRET_KEY, { expiresIn: '1h' });
-    res.json({ token, userId: user._id });
+        const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '1d' });
+        res.json({ 
+            token, 
+            user: { id: user._id, nome: user.nome, email: user.email } 
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- ROTAS DE POSTS ---
 
-app.get('/api/posts', authenticateToken, async (req, res) => {
-    const posts = await Post.find().populate('author', 'name avatar').sort({ createdAt: -1 });
-    res.json(posts);
-});
-
-app.post('/api/posts', authenticateToken, async (req, res) => {
+// Criar Post
+app.post('/api/posts', authMiddleware, async (req, res) => {
     try {
         const newPost = new Post({
-            content: req.body.content,
-            author: req.user.id
+            conteudo: req.body.conteudo,
+            autor: req.user.id
         });
         await newPost.save();
-        const populatedPost = await Post.findById(newPost._id).populate('author', 'name avatar');
-        res.status(201).json(populatedPost);
-    } catch (error) {
-        res.status(400).json({ error: 'Erro ao criar post' });
+        res.status(201).json(newPost);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
-// --- ROTAS DE PERFIL ---
-
-app.get('/api/profile/:id', authenticateToken, async (req, res) => {
-    const user = await User.findById(req.params.id).select('-password');
-    const posts = await Post.find({ author: req.params.id }).sort({ createdAt: -1 });
-    res.json({ user, posts });
+// Listar todos os posts (Feed)
+app.get('/api/posts', async (req, res) => {
+    try {
+        const posts = await Post.find()
+            .populate('autor', 'nome foto')
+            .sort({ criadoEm: -1 });
+        res.json(posts);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/profile', authenticateToken, async (req, res) => {
-    const { bio, avatar } = req.body;
-    await User.findByIdAndUpdate(req.user.id, { bio, avatar });
-    res.json({ message: 'Perfil atualizado!' });
+// Curtir/Descurtir Post
+app.post('/api/posts/:id/like', authMiddleware, async (req, res) => {
+    try {
+        const post = await Post.findById(req.params.id);
+        if (!post) return res.status(404).json({ msg: 'Post não encontrado' });
+
+        const index = post.likes.indexOf(req.user.id);
+        if (index === -1) {
+            post.likes.push(req.user.id); 
+        } else {
+            post.likes.splice(index, 1); 
+        }
+
+        await post.save();
+        res.json(post);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.listen(PORT, () => console.log(`🚀 Servidor rodando em http://localhost:${PORT}`));
+// --- ROTA DE PERFIL ---
+
+app.get('/api/profile', authMiddleware, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select('-senha');
+        const userPosts = await Post.find({ autor: req.user.id }).sort({ criadoEm: -1 });
+        res.json({ user, posts: userPosts });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.listen(PORT, () => console.log(`🚀 Servidor online na porta ${PORT}`));
