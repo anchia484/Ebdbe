@@ -5,25 +5,21 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+// O Render define a porta automaticamente na variável de ambiente PORT
+const PORT = process.env.PORT || 10000; 
 const JWT_SECRET = 'sua_chave_secreta_aqui'; 
 
-// Middlewares
 app.use(express.json());
 app.use(cors());
 
 // --- CONEXÃO MONGODB ATLAS ---
-// String atualizada com o nome do banco 'minirede_social' e parâmetros de segurança
-const mongoURI = 'mongodb+srv://santosborge484_db_user:uNWJuU9Wk7C15r3t@cluster0.yqbcfll.mongodb.net/minirede_social?retryWrites=true&w=majority&appName=Cluster0';
+// Removi os parâmetros obsoletos para limpar o log e foquei na string direta
+const mongoURI = 'mongodb+srv://santosborge484_db_user:uNWJuU9Wk7C15r3t@cluster0.yqbcfll.mongodb.net/minirede_social?retryWrites=true&w=majority';
 
-mongoose.connect(mongoURI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-})
+mongoose.connect(mongoURI)
 .then(() => console.log('✅ Conectado ao MongoDB Atlas com sucesso!'))
 .catch(err => {
-    console.error('❌ Erro crítico de conexão:', err.message);
-    console.log('Verifique se o IP 0.0.0.0/0 está ativo no painel Network Access do Atlas.');
+    console.error('❌ Erro de conexão:', err.message);
 });
 
 // --- MODELS ---
@@ -50,40 +46,36 @@ const Post = mongoose.model('Post', PostSchema);
 
 const authMiddleware = (req, res, next) => {
     const token = req.header('Authorization');
-    if (!token) return res.status(401).json({ msg: 'Acesso negado. Faça login primeiro.' });
+    if (!token) return res.status(401).json({ msg: 'Acesso negado.' });
 
     try {
         const decoded = jwt.verify(token.replace('Bearer ', ''), JWT_SECRET);
         req.user = decoded;
         next();
     } catch (err) {
-        res.status(400).json({ msg: 'Sessão inválida ou expirada.' });
+        res.status(400).json({ msg: 'Token inválido.' });
     }
 };
 
-// --- ROTAS DE AUTENTICAÇÃO ---
+// --- ROTAS ---
 
-// Registro
 app.post('/api/register', async (req, res) => {
     try {
         const { nome, email, senha } = req.body;
-        
         let userExists = await User.findOne({ email });
-        if (userExists) return res.status(400).json({ msg: 'Este e-mail já está em uso.' });
+        if (userExists) return res.status(400).json({ msg: 'E-mail já existe.' });
 
         const salt = await bcrypt.genSalt(10);
         const senhaCripto = await bcrypt.hash(senha, salt);
 
         const newUser = new User({ nome, email, senha: senhaCripto });
         await newUser.save();
-
-        res.status(201).json({ msg: 'Usuário registrado com sucesso!' });
+        res.status(201).json({ msg: 'Registrado!' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Login
 app.post('/api/login', async (req, res) => {
     try {
         const { email, senha } = req.body;
@@ -94,24 +86,15 @@ app.post('/api/login', async (req, res) => {
         if (!isMatch) return res.status(400).json({ msg: 'Senha incorreta.' });
 
         const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '1d' });
-        res.json({ 
-            token, 
-            user: { id: user._id, nome: user.nome, email: user.email } 
-        });
+        res.json({ token, user: { id: user._id, nome: user.nome } });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// --- ROTAS DE POSTS ---
-
-// Criar Post
 app.post('/api/posts', authMiddleware, async (req, res) => {
     try {
-        const newPost = new Post({
-            conteudo: req.body.conteudo,
-            autor: req.user.id
-        });
+        const newPost = new Post({ conteudo: req.body.conteudo, autor: req.user.id });
         await newPost.save();
         res.status(201).json(newPost);
     } catch (err) {
@@ -119,39 +102,27 @@ app.post('/api/posts', authMiddleware, async (req, res) => {
     }
 });
 
-// Listar todos os posts (Feed)
 app.get('/api/posts', async (req, res) => {
     try {
-        const posts = await Post.find()
-            .populate('autor', 'nome foto')
-            .sort({ criadoEm: -1 });
+        const posts = await Post.find().populate('autor', 'nome foto').sort({ criadoEm: -1 });
         res.json(posts);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Curtir/Descurtir Post
 app.post('/api/posts/:id/like', authMiddleware, async (req, res) => {
     try {
         const post = await Post.findById(req.params.id);
-        if (!post) return res.status(404).json({ msg: 'Post não encontrado' });
-
         const index = post.likes.indexOf(req.user.id);
-        if (index === -1) {
-            post.likes.push(req.user.id); 
-        } else {
-            post.likes.splice(index, 1); 
-        }
-
+        if (index === -1) post.likes.push(req.user.id);
+        else post.likes.splice(index, 1);
         await post.save();
         res.json(post);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
-
-// --- ROTA DE PERFIL ---
 
 app.get('/api/profile', authMiddleware, async (req, res) => {
     try {
@@ -163,4 +134,4 @@ app.get('/api/profile', authMiddleware, async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`🚀 Servidor online na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
